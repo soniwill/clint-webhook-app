@@ -18,6 +18,8 @@ class Lead(Base):
     phone = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     notified = Column(Boolean, default=False)
+    in_stage_one = Column(Boolean, default=True)  # Novo campo para rastrear se o lead está na etapa 1
+    moved_at = Column(DateTime, nullable=True)    # Quando o lead foi movido da etapa 1
     
     def to_dict(self):
         return {
@@ -26,12 +28,17 @@ class Lead(Base):
             "email": self.email,
             "phone": self.phone,
             "created_at": self.created_at.isoformat(),
-            "notified": self.notified
+            "notified": self.notified,
+            "in_stage_one": self.in_stage_one,
+            "moved_at": self.moved_at.isoformat() if self.moved_at else None
         }
 
 # Criar tabelas
-def init_db():
-    Base.metadata.create_all(bind=engine)
+def init_db(db_engine=None):
+    if db_engine:
+        Base.metadata.create_all(bind=db_engine)
+    else:
+        Base.metadata.create_all(bind=engine)
 
 # Obter sessão do banco de dados
 def get_db():

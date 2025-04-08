@@ -86,18 +86,29 @@ def check_and_notify_old_leads():
     """Verifica leads antigos e envia notificações quando necessário"""
     try:
         db = get_db()
-        # Calcular a data limite (7 dias atrás)
-        threshold_date = datetime.utcnow() - timedelta(days=Config.LEAD_RETENTION_DAYS)
+        current_time = datetime.utcnow()
         
-        # Buscar leads que estão há mais de 7 dias na etapa 1, ainda não foram notificados,
-        # e ainda estão na etapa 1
+        # Calcular a data limite baseada no modo (teste ou produção)
+        if Config.TEST_MODE:
+            # Em modo de teste, usar minutos
+            threshold_date = current_time - timedelta(minutes=Config.LEAD_RETENTION_MINUTES)
+            logger.info(f"Modo de teste ativado: verificando leads mais antigos que {Config.LEAD_RETENTION_MINUTES} minutos")
+        else:
+            # Em modo normal, usar dias
+            threshold_date = current_time - timedelta(days=Config.LEAD_RETENTION_DAYS)
+            logger.info(f"Verificando leads mais antigos que {Config.LEAD_RETENTION_DAYS} dias")
+        
+        # Buscar leads que estão há mais tempo que o limite na etapa 1,
+        # ainda não foram notificados, e ainda estão na etapa 1
         old_leads = db.query(Lead).filter(
             and_(
                 Lead.created_at <= threshold_date,
                 Lead.notified == False,
-                Lead.in_stage_one == True  # Adicionado este filtro
+                Lead.in_stage_one == True
             )
         ).all()
+        
+        logger.info(f"Encontrados {len(old_leads)} leads para notificação")
         
         for lead in old_leads:
             # Enviar webhook para o Clint CRM
@@ -115,21 +126,23 @@ def check_and_notify_old_leads():
     except Exception as e:
         logger.error(f"Erro ao verificar leads antigos: {str(e)}")
         return 0
-
 def send_webhook_to_clint(lead):
-    """Envia um webhook para o Clint CRM"""
+    """
+    Envia um webhook para o Clint CRM com apenas o e-mail do lead.
+    Não requer autenticação via API key.
+    """
     try:
+        # Payload simplificado contendo apenas o e-mail do lead
         payload = {
-            "name": lead.name,
-            "email": lead.email,
-            "phone": lead.phone,
-            "retention_days": Config.LEAD_RETENTION_DAYS
+            "email": lead.email
         }
         
+        # Cabeçalho básico sem autenticação
         headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {Config.CLINT_CRM_API_KEY}"
+            "Content-Type": "application/json"
         }
+        
+        logger.info(f"Enviando webhook para Clint CRM para o lead: {lead.email}")
         
         response = requests.post(
             Config.CLINT_CRM_WEBHOOK_URL,
@@ -137,10 +150,16 @@ def send_webhook_to_clint(lead):
             headers=headers
         )
         
-        if response.status_code == 200:
+        if response.status_code in [200, 201, 202]:
+            logger.info(f"Webhook enviado com sucesso para o lead: {lead.email}")
             return True
         else:
-            logger.error(f"Erro ao enviar webhook: {response.status_code} - {response.text}")
+            logger.error(f"Erro ao enviar webhook: Código {response.status_code} - {response.text}")
+            try:
+                error_detail = response.json()
+                logger.error(f"Detalhes do erro: {error_detail}")
+            except:
+                pass
             return False
     
     except Exception as e:
@@ -153,10 +172,19 @@ def cleanup_old_leads():
         db = get_db()
         current_time = datetime.utcnow()
         
-        # Remover leads que já foram notificados e estão há mais de 30 dias no sistema
-        very_old_date = current_time - timedelta(days=30)
+        # Definir períodos baseados no modo (teste ou produção)
+        if Config.TEST_MODE:
+            # Em modo de teste, usar minutos
+            very_old_date = current_time - timedelta(minutes=30)  # 30 minutos para leads notificados
+            moved_date_threshold = current_time - timedelta(minutes=15)  # 15 minutos para leads movidos
+            logger.info("Modo de teste: limpando leads notificados há mais de 30 minutos e movidos há mais de 15 minutos")
+        else:
+            # Em modo normal, usar dias
+            very_old_date = current_time - timedelta(days=30)  # 30 dias para leads notificados
+            moved_date_threshold = current_time - timedelta(days=15)  # 15 dias para leads movidos
+            logger.info("Limpando leads notificados há mais de 30 dias e movidos há mais de 15 dias")
         
-        # Leads que foram notificados e estão há mais de 30 dias no sistema
+        # Leads que foram notificados e estão há mais tempo que o limite no sistema
         old_notified_leads = db.query(Lead).filter(
             and_(
                 Lead.created_at <= very_old_date,
@@ -164,8 +192,7 @@ def cleanup_old_leads():
             )
         )
         
-        # Leads que foram movidos da etapa 1 há mais de 15 dias
-        moved_date_threshold = current_time - timedelta(days=15)
+        # Leads que foram movidos da etapa 1 há mais tempo que o limite
         old_moved_leads = db.query(Lead).filter(
             and_(
                 Lead.in_stage_one == False,

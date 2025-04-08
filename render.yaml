@@ -1,0 +1,26 @@
+services:
+  - type: web
+    name: clint-webhook-app
+    env: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: clint-webhook-db
+          property: connectionString
+      - key: CLINT_CRM_WEBHOOK_URL
+        sync: false
+      - key: CLINT_CRM_API_KEY
+        sync: false
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DEBUG
+        value: false
+      - key: LEAD_RETENTION_DAYS
+        value: 7
+
+databases:
+  - name: clint-webhook-db
+    databaseName: clint_webhook
+    user: clint_webhook_user
